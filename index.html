@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Chat App</title>
+    <style>
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+      }
+      video {
+        width: 300px;
+        height: 200px;
+        border: 1px solid #ccc;
+        margin: 5px;
+      }
+      #userList {
+        margin: 10px;
+        border: 1px solid #ccc;
+        padding: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <input type="text" id="username" placeholder="Enter username" autofocus />
+    <button id="login">Login</button>
+
+    <div id="userList"></div>
+    <button id="call" disabled>Call</button>
+    <video id="localVideo" autoplay muted></video>
+    <video id="remoteVideo" autoplay></video>
+
+    <script>
+      const ws = new WebSocket("ws://192.168.1.71:3000");
+      let localStream;
+      let remoteStream;
+      let peerConnection;
+      const servers = {
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      };
+
+      const usernameInput = document.getElementById("username");
+      const loginButton = document.getElementById("login");
+      const userListDiv = document.getElementById("userList");
+      const callButton = document.getElementById("call");
+      const localVideo = document.getElementById("localVideo");
+      const remoteVideo = document.getElementById("remoteVideo");
+      let username;
+      let targetUser;
+
+      loginButton.onclick = () => {
+        username = usernameInput.value;
+        ws.send(JSON.stringify({ type: "login", name: username }));
+      };
+
+      ws.onmessage = (message) => {
+        const data = JSON.parse(message.data);
+
+        switch (data.type) {
+          case "login":
+            if (data.success) {
+              startLocalStream();
+            } else {
+              alert("Username is taken");
+            }
+            break;
+          case "userlist":
+            updateUserList(data.users);
+            break;
+          case "offer":
+            handleOffer(data.offer, data.name);
+            break;
+          case "answer":
+            handleAnswer(data.answer);
+            break;
+          case "candidate":
+            handleCandidate(data.candidate);
+            break;
+        }
+      };
+
+      function startLocalStream() {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          navigator.mediaDevices
+            .getUserMedia({ video: true, audio: true })
+            .then((stream) => {
+              localVideo.srcObject = stream;
+              localStream = stream;
+            })
+            .catch((error) => {
+              console.error("Error accessing media devices.", error);
+            });
+        } else {
+          alert("Your browser does not support media devices.");
+        }
+      }
+
+      function updateUserList(users) {
+        userListDiv.innerHTML = "";
+        users.forEach((user) => {
+          if (user !== username) {
+            const userDiv = document.createElement("div");
+            userDiv.textContent = user;
+            userDiv.onclick = () => {
+              targetUser = user;
+              callButton.disabled = false;
+            };
+            userListDiv.appendChild(userDiv);
+          }
+        });
+      }
+
+      callButton.onclick = () => {
+        if (targetUser) {
+          callUser(targetUser);
+        }
+      };
+
+      function callUser(target) {
+        peerConnection = new RTCPeerConnection(servers);
+        peerConnection.onicecandidate = handleICECandidateEvent;
+        peerConnection.ontrack = handleTrackEvent;
+
+        localStream
+          .getTracks()
+          .forEach((track) => peerConnection.addTrack(track, localStream));
+
+        peerConnection
+          .createOffer()
+          .then((offer) => peerConnection.setLocalDescription(offer))
+          .then(() => {
+            ws.send(
+              JSON.stringify({
+                type: "offer",
+                offer: peerConnection.localDescription,
+                name: username,
+                target: target,
+              })
+            );
+          });
+      }
+
+      function handleOffer(offer, name) {
+        peerConnection = new RTCPeerConnection(servers);
+        peerConnection.onicecandidate = handleICECandidateEvent;
+        peerConnection.ontrack = handleTrackEvent;
+
+        peerConnection
+          .setRemoteDescription(new RTCSessionDescription(offer))
+          .then(() =>
+            localStream
+              .getTracks()
+              .forEach((track) => peerConnection.addTrack(track, localStream))
+          )
+          .then(() => peerConnection.createAnswer())
+          .then((answer) => peerConnection.setLocalDescription(answer))
+          .then(() => {
+            ws.send(
+              JSON.stringify({
+                type: "answer",
+                answer: peerConnection.localDescription,
+                name: username,
+                target: name,
+              })
+            );
+          });
+      }
+
+      function handleAnswer(answer) {
+        peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      }
+
+      function handleCandidate(candidate) {
+        peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+
+      function handleICECandidateEvent(event) {
+        if (event.candidate) {
+          ws.send(
+            JSON.stringify({
+              type: "candidate",
+              candidate: event.candidate,
+              name: username,
+              target: targetUser,
+            })
+          );
+        }
+      }
+
+      function handleTrackEvent(event) {
+        remoteVideo.srcObject = event.streams[0];
+      }
+    </script>
+  </body>
+</html>
