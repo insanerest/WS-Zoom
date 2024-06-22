@@ -3,10 +3,7 @@ const http = require("http");
 const fs = require("fs");
 const express = require("express");
 const app = express();
-const privateKey = fs.readFileSync("certificates/server.key", "utf8");
-const certificate = fs.readFileSync("certificates/server.crt", "utf8");
-const credentials = { key: privateKey, cert: certificate };
-const server = http.createServer(credentials, app);
+const server = http.createServer(app);
 server.listen(3000, () => {
   console.log("Server running on port 3000");
 });
